@@ -1,5 +1,5 @@
 // ====================================================
-// FRUIT NINJA — V19.4 SUPER MEGA ULTRA (uncompressed)
+// FRUIT NINJA — V19.5 SUPER MEGA ULTRA (uncompressed)
 // Boss every 1500 points | 2FA | all features
 // ====================================================
 
@@ -2076,6 +2076,7 @@ function checkSlice() {
 
   for (let i = items.length - 1; i >= 0; i--) {
     let it = items[i];
+    if (!it) continue;
     if (it.sliced) continue;
 
     if (lineCircle(p1.x, p1.y, p2.x, p2.y, it.x, it.y, it.radius)) {
@@ -2153,7 +2154,7 @@ function checkSlice() {
         triggerShake(20, 15);
         for (let j = items.length - 1; j >= 0; j--) {
           let other = items[j];
-          if (other === it || other.type === 'bomb' || other.type === 'boss') continue;
+          if (other === it || other.type === 'bomb' || other.type === 'boss' || other.type === 'milestone') continue;
           if (other.sliced) continue;
           other.sliced = true;
           score += 10;
@@ -2163,7 +2164,9 @@ function checkSlice() {
           slicedHalves.push(new SlicedHalf(other, random(-PI, PI), -1));
           items.splice(j, 1);
         }
-        items.splice(i, 1);
+        it.sliced = true;
+        let li = items.indexOf(it);
+        if (li !== -1) items.splice(li, 1);
         floatingTexts.push(new FloatingText(it.x, it.y, '⚡ LIGHTNING!', '#ffd700'));
         continue;
       }
