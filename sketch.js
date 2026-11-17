@@ -1,5 +1,5 @@
 // ====================================================
-// FRUIT NINJA — V19.5 SUPER MEGA ULTRA (uncompressed)
+// FRUIT NINJA — V20.0 MOBILE FIT (uncompressed)
 // Boss every 1500 points | 2FA | all features
 // ====================================================
 
@@ -1309,6 +1309,16 @@ class FloatingText {
 // --- 8. SETUP ---
 function setup() {
   createCanvas(windowWidth, windowHeight);
+  try {
+    let st = document.createElement('style');
+    st.innerHTML = 'html,body{margin:0;padding:0;overflow:hidden;height:100%;background:#000;}' +
+                    'canvas{display:block;touch-action:none;}' +
+                    'input,button{touch-action:manipulation;}';
+    document.head.appendChild(st);
+    let vp = document.querySelector('meta[name="viewport"]');
+    if (!vp) { vp = document.createElement('meta'); vp.setAttribute('name', 'viewport'); document.head.appendChild(vp); }
+    vp.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover');
+  } catch (e) {}
   textFont('sans-serif');
   rectMode(CENTER);
   imageMode(CENTER);
@@ -1427,7 +1437,18 @@ function windowResized() {
 }
 
 // --- 9. MAIN DRAW LOOP ---
+// MOBILE FIT: все интерфейсы масштабируются под размер экрана
+let uiScale = 1, uiOx = 0, uiOy = 0;
+
 function draw() {
+  // Подгонка под любой экран: считаем масштаб каждый кадр
+  uiScale = constrain(min(width / 800, height / 650), 0.2, 1);
+  uiOx = width * (1 - uiScale) / 2;
+  uiOy = height * (1 - uiScale) / 2;
+  resetMatrix();
+  translate(uiOx, uiOy);
+  scale(uiScale);
+
   dt = deltaTime / 16.666;
   if (isNaN(dt) || dt === 0 || dt === Infinity) dt = 1;
   if (dt > 3) dt = 3;
@@ -2154,7 +2175,7 @@ function checkSlice() {
         triggerShake(20, 15);
         for (let j = items.length - 1; j >= 0; j--) {
           let other = items[j];
-          if (other === it || other.type === 'bomb' || other.type === 'boss' || other.type === 'milestone') continue;
+          if (!other || other === it || other.type === 'bomb' || other.type === 'boss' || other.type === 'milestone') continue;
           if (other.sliced) continue;
           other.sliced = true;
           score += 10;
@@ -3448,6 +3469,8 @@ function keyPressed() {
 }
 
 function mousePressed() {
+  mouseX = (mouseX - uiOx) / uiScale;
+  mouseY = (mouseY - uiOy) / uiScale;
   try { initAudio(); } catch (e) {}
 
   // Fullscreen
@@ -3929,7 +3952,11 @@ function mousePressed() {
   }
 }
 
-function touchStarted() {
+function touchStarted(ev) {
+  // Если палец попал на поле ввода или HTML-кнопку — даём браузеру обработать касание
+  try {
+    if (ev && ev.target && ev.target.tagName && ev.target.tagName !== 'CANVAS') return true;
+  } catch (e) {}
   if (touches.length > 0) {
     mouseX = touches[0].x;
     mouseY = touches[0].y;
@@ -3938,7 +3965,17 @@ function touchStarted() {
   return false;
 }
 
-function touchEnded() { return false; }
+function touchEnded() { return true; }
+
+function mouseMoved() {
+  mouseX = (mouseX - uiOx) / uiScale;
+  mouseY = (mouseY - uiOy) / uiScale;
+}
+
+function mouseDragged() {
+  mouseX = (mouseX - uiOx) / uiScale;
+  mouseY = (mouseY - uiOy) / uiScale;
+}
 
 // --- 34. RESET ---
 function resetGame() {
@@ -4009,47 +4046,52 @@ function triggerShake(f, i) {
 // --- 36. AUTH UI ---
 function showAuthUI() {
   let cx = width / 2, w = 300, h = 40;
+  // масштаб под маленькие экраны
+  let as = min(uiScale, 1);
+  let pw = w * as, ph = h * as;
+  let PX = function (x) { return x * as + uiOx; };
+  let PY = function (y) { return y * as + uiOy; };
   inputEmail.hide(); inputPass.hide(); inputNick.hide();
   inputCode.hide(); btnSendCode.hide();
   btnAction.hide(); btnSwitch.hide(); btnBackAuth.hide();
   inputMasterKey.hide(); btnVerifyMaster.hide(); btnCancel2FA.hide();
 
   if (pendingCreator2FA) {
-    inputMasterKey.position(cx - w / 2, height / 2 - 60);
-    inputMasterKey.size(w, h);
+    inputMasterKey.position(PX(cx - pw / 2), PY(height / 2 - 60));
+    inputMasterKey.size(pw, ph);
     inputMasterKey.show();
     btnVerifyMaster.html(t('verify'));
-    btnVerifyMaster.position(cx - w / 2, height / 2 + 10);
-    btnVerifyMaster.size(w, h);
+    btnVerifyMaster.position(PX(cx - pw / 2), PY(height / 2 + 10));
+    btnVerifyMaster.size(pw, ph);
     btnVerifyMaster.show();
     btnCancel2FA.html(t('cancel2FA'));
-    btnCancel2FA.position(cx - w / 2, height / 2 + 70);
-    btnCancel2FA.size(w, 30);
+    btnCancel2FA.position(PX(cx - pw / 2), PY(height / 2 + 70));
+    btnCancel2FA.size(pw, 30 * as);
     btnCancel2FA.show();
     return;
   }
 
   if (authMode === 'login') {
-    inputEmail.position(cx - w / 2, height / 2 - 80); inputEmail.size(w, h); inputEmail.show();
-    inputPass.position(cx - w / 2, height / 2 - 20); inputPass.size(w, h); inputPass.show();
+    inputEmail.position(PX(cx - pw / 2), PY(height / 2 - 80)); inputEmail.size(pw, ph); inputEmail.show();
+    inputPass.position(PX(cx - pw / 2), PY(height / 2 - 20)); inputPass.size(pw, ph); inputPass.show();
     btnAction.html(t('login'));
-    btnAction.position(cx - w / 2, height / 2 + 40); btnAction.size(w, h); btnAction.show();
+    btnAction.position(PX(cx - pw / 2), PY(height / 2 + 40)); btnAction.size(pw, ph); btnAction.show();
     btnSwitch.html(t('switchReg'));
-    btnSwitch.position(cx - w / 2, height / 2 + 90); btnSwitch.size(w, 30); btnSwitch.show();
+    btnSwitch.position(PX(cx - pw / 2), PY(height / 2 + 90)); btnSwitch.size(pw, 30 * as); btnSwitch.show();
   } else {
-    inputEmail.position(cx - w / 2, height / 2 - 220); inputEmail.size(w, h); inputEmail.show();
+    inputEmail.position(PX(cx - pw / 2), PY(height / 2 - 220)); inputEmail.size(pw, ph); inputEmail.show();
     btnSendCode.html('SEND CODE');
-    btnSendCode.position(cx - w / 2, height / 2 - 170); btnSendCode.size(w, h); btnSendCode.show();
-    inputCode.position(cx - w / 2, height / 2 - 110); inputCode.size(w, h); inputCode.show();
-    inputPass.position(cx - w / 2, height / 2 - 60); inputPass.size(w, h); inputPass.show();
-    inputNick.position(cx - w / 2, height / 2 - 10); inputNick.size(w, h); inputNick.show();
+    btnSendCode.position(PX(cx - pw / 2), PY(height / 2 - 170)); btnSendCode.size(pw, ph); btnSendCode.show();
+    inputCode.position(PX(cx - pw / 2), PY(height / 2 - 110)); inputCode.size(pw, ph); inputCode.show();
+    inputPass.position(PX(cx - pw / 2), PY(height / 2 - 60)); inputPass.size(pw, ph); inputPass.show();
+    inputNick.position(PX(cx - pw / 2), PY(height / 2 - 10)); inputNick.size(pw, ph); inputNick.show();
     btnAction.html(t('reg'));
-    btnAction.position(cx - w / 2, height / 2 + 40); btnAction.size(w, h); btnAction.show();
+    btnAction.position(PX(cx - pw / 2), PY(height / 2 + 40)); btnAction.size(pw, ph); btnAction.show();
     btnSwitch.html(t('switchLog'));
-    btnSwitch.position(cx - w / 2, height / 2 + 90); btnSwitch.size(w, 30); btnSwitch.show();
+    btnSwitch.position(PX(cx - pw / 2), PY(height / 2 + 90)); btnSwitch.size(pw, 30 * as); btnSwitch.show();
   }
-  btnBackAuth.position(cx - w / 2, height - 80);
-  btnBackAuth.size(w, 40);
+  btnBackAuth.position(PX(cx - pw / 2), PY(height - 80));
+  btnBackAuth.size(pw, 40 * as);
   btnBackAuth.show();
 }
 
