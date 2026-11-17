@@ -1323,9 +1323,9 @@ function setup() {
       st.id = 'vnMobileStyle';
       (document.head || document.documentElement).appendChild(st);
     }
-    st.textContent = 'html,body{margin:0;padding:0;overflow:hidden;height:100%;background:#000;-webkit-text-size-adjust:100%;overscroll-behavior:none;}'
-      + 'canvas{display:block;touch-action:none;position:fixed;top:0;left:0;z-index:0;}'
-      + 'input,button,select,textarea{font-size:16px;touch-action:auto;-webkit-user-select:text;user-select:text;z-index:50;}';
+    st.textContent = 'html,body{margin:0;padding:0;overflow:hidden;height:100%;background:#000;-webkit-text-size-adjust:100%;}'
+      + 'canvas{display:block;touch-action:none;}'
+      + 'input,button,select,textarea{font-size:16px;touch-action:auto;-webkit-user-select:text;user-select:text;}';
   })();
 
   createCanvas(windowWidth, windowHeight);
@@ -1413,7 +1413,10 @@ function setup() {
     }, { passive: true });
   });
 
-  document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+  // Overscroll protection ONLY on the canvas: DOM buttons and inputs must keep working
+  document.addEventListener('touchmove', function (e) {
+    if (e.target && e.target.tagName === 'CANVAS') e.preventDefault();
+  }, { passive: false });
 
   // Browser back button → pause / menu
   history.pushState({ game: 'fn' }, '', location.href);
@@ -1438,51 +1441,12 @@ function setup() {
       e.returnValue = '';
     }
   });
-
-  // --- MOBILE FIT: следим за реальным размером экрана (поворот, тулбары, клавиатура) ---
-  fitToScreen();
-  window.addEventListener('resize', fitToScreen);
-  window.addEventListener('orientationchange', function () {
-    fitToScreen();
-    setTimeout(fitToScreen, 250);
-    setTimeout(fitToScreen, 700);
-  });
-  if (window.visualViewport) {
-    try { window.visualViewport.addEventListener('resize', fitToScreen); } catch (e) {}
-  }
-
-  // --- MOBILE TAP FIX: на тач-устройствах DOM-кнопки (логин/регистрация и др.)
-  // срабатывают сразу по касанию, без полагания на синтезированные события ---
-  document.addEventListener('touchstart', function (e) {
-    let tg = e.target;
-    if (!tg || tg.tagName !== 'BUTTON') return;
-    e.preventDefault();
-    let now = Date.now();
-    if (now - (tg._lastTap || 0) < 350) return; // защита от двойного срабатывания
-    tg._lastTap = now;
-    try { tg.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); } catch (err) {}
-    try { tg.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })); } catch (err) {}
-    try { tg.dispatchEvent(new MouseEvent('click', { bubbles: true })); } catch (err) {}
-    try { tg.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); } catch (err) {}
-  }, { passive: false });
-}
-
-function fitToScreen() {
-  let w = window.innerWidth, h = window.innerHeight;
-  if (window.visualViewport) {
-    w = window.visualViewport.width;
-    h = window.visualViewport.height;
-  }
-  w = Math.round(w); h = Math.round(h);
-  if (w > 0 && h > 0 && (Math.abs(width - w) > 1 || Math.abs(height - h) > 1)) {
-    resizeCanvas(w, h);
-    bgCache = null;
-    if (gameState === 'AUTH') showAuthUI();
-  }
 }
 
 function windowResized() {
-  fitToScreen();
+  resizeCanvas(windowWidth, windowHeight);
+  bgCache = null;
+  if (gameState === 'AUTH') showAuthUI();
 }
 
 // --- 9. MAIN DRAW LOOP ---
@@ -2131,18 +2095,23 @@ function updateGameplay() {
 function checkSlice() {
   if (swipePath.length < 2) return;
 
-  // Хитбоксы по ВСЕЙ длине следа катаны: проверяем каждый сегмент свайпа,
-  // а не только кончик лезвия (начало движения)
-  for (let s = swipePath.length - 1; s >= 1; s--) {
-    let p1 = swipePath[s];
-    let p2 = swipePath[s - 1];
-
-    for (let i = items.length - 1; i >= 0; i--) {
+  for (let i = items.length - 1; i >= 0; i--) {
     let it = items[i];
     if (!it) continue;
     if (it.sliced) continue;
 
-    if (lineCircle(p1.x, p1.y, p2.x, p2.y, it.x, it.y, it.radius)) {
+    // HITBOX ALONG THE ENTIRE BLADE: check every segment of the swipe trail
+    // (start, middle and tip of the blade all cut)
+    let _hitSeg = null;
+    for (let s = 0; s < swipePath.length - 1; s++) {
+      if (lineCircle(swipePath[s].x, swipePath[s].y, swipePath[s + 1].x, swipePath[s + 1].y,
+                     it.x, it.y, it.radius)) {
+        _hitSeg = [swipePath[s], swipePath[s + 1]];
+        break;
+      }
+    }
+    if (_hitSeg) {
+      let p1 = _hitSeg[0], p2 = _hitSeg[1];
 
       // BOSS — особая логика: сбрасываем sliced=false, чтобы бить снова
       if (it.type === 'boss') {
@@ -2356,13 +2325,12 @@ function checkSlice() {
       items.splice(i, 1);
     }
   }
-  }
 }
 
 // --- 16. SWIPE DRAW ---
 function updateAndDrawSwipe() {
   let now = millis();
-  if (mouseIsPressed) swipePath.push({ x: mouseX, y: mouseY, time: now });
+  if (mouseIsPressed || touchDown) swipePath.push({ x: mouseX, y: mouseY, time: now });
   swipePath = swipePath.filter(p => now - p.time < 150);
   if (swipePath.length < 2) return;
 
@@ -3547,49 +3515,6 @@ function mousePressed() {
     }
   }
 
-  // AUTH: canvas-fallback — кнопки входа/регистрации дублируются на канвасе,
-  // чтобы нажатие срабатывало даже если DOM-кнопка не отвечает
-  if (gameState === 'AUTH') {
-    let w = 300, h = 40, cx = width / 2;
-    const inRect = (bx, by, bw, bh) =>
-      mouseX > bx - bw / 2 && mouseX < bx + bw / 2 &&
-      mouseY > by - bh / 2 && mouseY < by + bh / 2;
-
-    // BACK (внизу)
-    if (inRect(cx, height - 60, w, h)) {
-      pendingCreator2FA = false;
-      gameState = 'MENU';
-      hideAuthUI();
-      return;
-    }
-
-    if (pendingCreator2FA) {
-      if (inRect(cx, height / 2 + 30, w, h)) { verifyMasterKeyAction(); return; }
-      if (inRect(cx, height / 2 + 85, w, 30)) {
-        pendingCreator2FA = false;
-        inputMasterKey.value('');
-        showAuthUI();
-        return;
-      }
-      return;
-    }
-
-    // LOGIN / REGISTER (главная кнопка)
-    if (inRect(cx, height / 2 + 60, w, h)) { authAction(); return; }
-    // Переключатель вход/регистрация
-    if (inRect(cx, height / 2 + 105, w, 30)) {
-      authMode = authMode === 'login' ? 'register' : 'login';
-      pendingCode = '';
-      pendingEmail = '';
-      pendingCreator2FA = false;
-      showAuthUI();
-      return;
-    }
-    // SEND CODE (только в режиме регистрации)
-    if (authMode === 'register' && inRect(cx, height / 2 - 150, w, h)) { sendCodeAction(); return; }
-    return;
-  }
-
   // DAILY
   if (gameState === 'DAILY') {
     let btnY = height / 2 + 100;
@@ -4037,21 +3962,65 @@ function mousePressed() {
   }
 }
 
-function touchStarted(evt) {
-  if (touches.length > 0) {
-    mouseX = touches[0].x;
-    mouseY = touches[0].y;
+// --- MOBILE INPUT CORE (V22): tap = press, drag = scroll/slice ---
+let touchDown = false;
+let touchDragPrevY = null;
+
+// Fallback mapping of a real touch point to canvas coordinates
+// (p5 updates mouseX/mouseY itself, this is just insurance)
+function _mapTouchToCanvas(evt) {
+  let t = null;
+  if (evt && evt.touches && evt.touches.length) t = evt.touches[0];
+  else if (evt && evt.changedTouches && evt.changedTouches.length) t = evt.changedTouches[0];
+  if (t && typeof t.clientX === 'number') {
+    let cv = document.getElementById('defaultCanvas0') || document.querySelector('canvas');
+    if (cv) {
+      let r = cv.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        try { mouseX = (t.clientX - r.left) * (width / r.width); } catch (e) {}
+        try { mouseY = (t.clientY - r.top) * (height / r.height); } catch (e) {}
+      }
+    }
+  } else if (typeof touches !== 'undefined' && touches.length > 0) {
+    try { mouseX = touches[0].x; } catch (e) {}
+    try { mouseY = touches[0].y; } catch (e) {}
   }
-  // Preempt touch handling only on the canvas: on buttons and input fields we let the browser work
+}
+
+function touchStarted(evt) {
+  _mapTouchToCanvas(evt);
+  touchDown = true;
+  touchDragPrevY = mouseY;
   let onCanvas = evt && evt.target && evt.target.tagName === 'CANVAS';
   if (onCanvas) {
-    mousePressed();
-    return false;
+    try { mouseIsPressed = true; } catch (e) {}
+    try { mousePressed(); } catch (e) {}
+    return false; // no synthetic mouse events: everything is handled here
   }
   return true;
 }
 
+function touchMoved(evt) {
+  _mapTouchToCanvas(evt);
+  if (gameState === 'ACHIEVEMENTS') {
+    if (touchDragPrevY !== null) {
+      achScroll += (mouseY - touchDragPrevY) * 1.2;
+      let maxScroll = ACHIEVEMENTS.length * 70 - (height - 200);
+      if (maxScroll < 0) maxScroll = 0;
+      achScroll = constrain(achScroll, -maxScroll, 0);
+    }
+    touchDragPrevY = mouseY;
+    return false;
+  }
+  touchDragPrevY = null;
+  let onCanvas = evt && evt.target && evt.target.tagName === 'CANVAS';
+  return onCanvas ? false : true;
+}
+
 function touchEnded(evt) {
+  touchDown = false;
+  touchDragPrevY = null;
+  try { mouseIsPressed = false; } catch (e) {}
   let onCanvas = evt && evt.target && evt.target.tagName === 'CANVAS';
   return onCanvas ? false : true;
 }
@@ -4466,4 +4435,45 @@ function exitGhostMode() {
   }
   document.addEventListener('touchstart', goFS);
   document.addEventListener('click', goFS);
+})();
+
+// --- DOM BUTTONS ON TOUCH (V22): tap on LOGIN/REGISTER/VERIFY/etc. always works ---
+(function () {
+  function fire(el, type, x, y) {
+    try {
+      el.dispatchEvent(new MouseEvent(type, {
+        bubbles: true, cancelable: true, view: window, clientX: x, clientY: y
+      }));
+    } catch (err) {}
+  }
+  document.addEventListener('touchstart', function (e) {
+    let el = e.target;
+    while (el && el.tagName !== 'BUTTON' && el !== document.body && el !== document.documentElement) {
+      el = el.parentElement;
+    }
+    if (!el || el.tagName !== 'BUTTON') return;
+    try { e.preventDefault(); } catch (err) {} // no double fire from the browser
+    let now = Date.now();
+    if (now - (el._vnLastTap || 0) < 350) return;
+    el._vnLastTap = now;
+    let t = e.touches && e.touches[0] ? e.touches[0] : null;
+    let x = t ? t.clientX : 0, y = t ? t.clientY : 0;
+    fire(el, 'mousedown', x, y);
+    fire(el, 'mouseup', x, y);
+    fire(el, 'click', x, y);
+  }, { passive: false, capture: true });
+})();
+
+// --- SCREEN FIT (V22): react to rotation and mobile browser UI changes ---
+(function () {
+  function fit() {
+    try { if (typeof resizeCanvas === 'function') resizeCanvas(windowWidth, windowHeight); } catch (e) {}
+    try { bgCache = null; } catch (e) {}
+    try { if (typeof gameState !== 'undefined' && gameState === 'AUTH' && typeof showAuthUI === 'function') showAuthUI(); } catch (e) {}
+  }
+  window.addEventListener('orientationchange', function () {
+    setTimeout(fit, 250);
+    setTimeout(fit, 700);
+  });
+  window.addEventListener('resize', fit);
 })();
