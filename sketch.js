@@ -1323,9 +1323,9 @@ function setup() {
       st.id = 'vnMobileStyle';
       (document.head || document.documentElement).appendChild(st);
     }
-    st.textContent = 'html,body{margin:0;padding:0;overflow:hidden;height:100%;background:#000;-webkit-text-size-adjust:100%;}'
-      + 'canvas{display:block;touch-action:none;}'
-      + 'input,button,select,textarea{font-size:16px;touch-action:auto;-webkit-user-select:text;user-select:text;}';
+    st.textContent = 'html,body{margin:0;padding:0;overflow:hidden;height:100%;background:#000;-webkit-text-size-adjust:100%;overscroll-behavior:none;}'
+      + 'canvas{display:block;touch-action:none;position:fixed;top:0;left:0;z-index:0;}'
+      + 'input,button,select,textarea{font-size:16px;touch-action:auto;-webkit-user-select:text;user-select:text;z-index:50;}';
   })();
 
   createCanvas(windowWidth, windowHeight);
@@ -1438,12 +1438,51 @@ function setup() {
       e.returnValue = '';
     }
   });
+
+  // --- MOBILE FIT: следим за реальным размером экрана (поворот, тулбары, клавиатура) ---
+  fitToScreen();
+  window.addEventListener('resize', fitToScreen);
+  window.addEventListener('orientationchange', function () {
+    fitToScreen();
+    setTimeout(fitToScreen, 250);
+    setTimeout(fitToScreen, 700);
+  });
+  if (window.visualViewport) {
+    try { window.visualViewport.addEventListener('resize', fitToScreen); } catch (e) {}
+  }
+
+  // --- MOBILE TAP FIX: на тач-устройствах DOM-кнопки (логин/регистрация и др.)
+  // срабатывают сразу по касанию, без полагания на синтезированные события ---
+  document.addEventListener('touchstart', function (e) {
+    let tg = e.target;
+    if (!tg || tg.tagName !== 'BUTTON') return;
+    e.preventDefault();
+    let now = Date.now();
+    if (now - (tg._lastTap || 0) < 350) return; // защита от двойного срабатывания
+    tg._lastTap = now;
+    try { tg.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); } catch (err) {}
+    try { tg.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })); } catch (err) {}
+    try { tg.dispatchEvent(new MouseEvent('click', { bubbles: true })); } catch (err) {}
+    try { tg.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); } catch (err) {}
+  }, { passive: false });
+}
+
+function fitToScreen() {
+  let w = window.innerWidth, h = window.innerHeight;
+  if (window.visualViewport) {
+    w = window.visualViewport.width;
+    h = window.visualViewport.height;
+  }
+  w = Math.round(w); h = Math.round(h);
+  if (w > 0 && h > 0 && (Math.abs(width - w) > 1 || Math.abs(height - h) > 1)) {
+    resizeCanvas(w, h);
+    bgCache = null;
+    if (gameState === 'AUTH') showAuthUI();
+  }
 }
 
 function windowResized() {
-  resizeCanvas(windowWidth, windowHeight);
-  bgCache = null;
-  if (gameState === 'AUTH') showAuthUI();
+  fitToScreen();
 }
 
 // --- 9. MAIN DRAW LOOP ---
@@ -2091,10 +2130,14 @@ function updateGameplay() {
 // --- 15. SLICE HANDLER ---
 function checkSlice() {
   if (swipePath.length < 2) return;
-  let p1 = swipePath[swipePath.length - 1];
-  let p2 = swipePath[swipePath.length - 2];
 
-  for (let i = items.length - 1; i >= 0; i--) {
+  // Хитбоксы по ВСЕЙ длине следа катаны: проверяем каждый сегмент свайпа,
+  // а не только кончик лезвия (начало движения)
+  for (let s = swipePath.length - 1; s >= 1; s--) {
+    let p1 = swipePath[s];
+    let p2 = swipePath[s - 1];
+
+    for (let i = items.length - 1; i >= 0; i--) {
     let it = items[i];
     if (!it) continue;
     if (it.sliced) continue;
@@ -2312,6 +2355,7 @@ function checkSlice() {
       slicedHalves.push(new SlicedHalf(it, ang, -1));
       items.splice(i, 1);
     }
+  }
   }
 }
 
@@ -3501,6 +3545,49 @@ function mousePressed() {
       }
       return;
     }
+  }
+
+  // AUTH: canvas-fallback — кнопки входа/регистрации дублируются на канвасе,
+  // чтобы нажатие срабатывало даже если DOM-кнопка не отвечает
+  if (gameState === 'AUTH') {
+    let w = 300, h = 40, cx = width / 2;
+    const inRect = (bx, by, bw, bh) =>
+      mouseX > bx - bw / 2 && mouseX < bx + bw / 2 &&
+      mouseY > by - bh / 2 && mouseY < by + bh / 2;
+
+    // BACK (внизу)
+    if (inRect(cx, height - 60, w, h)) {
+      pendingCreator2FA = false;
+      gameState = 'MENU';
+      hideAuthUI();
+      return;
+    }
+
+    if (pendingCreator2FA) {
+      if (inRect(cx, height / 2 + 30, w, h)) { verifyMasterKeyAction(); return; }
+      if (inRect(cx, height / 2 + 85, w, 30)) {
+        pendingCreator2FA = false;
+        inputMasterKey.value('');
+        showAuthUI();
+        return;
+      }
+      return;
+    }
+
+    // LOGIN / REGISTER (главная кнопка)
+    if (inRect(cx, height / 2 + 60, w, h)) { authAction(); return; }
+    // Переключатель вход/регистрация
+    if (inRect(cx, height / 2 + 105, w, 30)) {
+      authMode = authMode === 'login' ? 'register' : 'login';
+      pendingCode = '';
+      pendingEmail = '';
+      pendingCreator2FA = false;
+      showAuthUI();
+      return;
+    }
+    // SEND CODE (только в режиме регистрации)
+    if (authMode === 'register' && inRect(cx, height / 2 - 150, w, h)) { sendCodeAction(); return; }
+    return;
   }
 
   // DAILY
